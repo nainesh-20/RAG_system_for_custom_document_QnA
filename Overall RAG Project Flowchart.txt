@@ -1,0 +1,136 @@
+Overall RAG Project Flowchart (Textual Representation)
+
++---------------------+      +-----------------------+
+|                     |      |                       |
+|    Source Documents |      |   Vector Database     |
+|    (PDFs, etc.)     |      |   (FAISS or Pinecone) |
+|                     |      |                       |
++---------------------+      +-----------------------+
+           |                          ^
+           |  (Ingestion Pipeline)    |
+           v                          |
++---------------------+      +-----------------------+
+|                     |      |                       |
+|     Load Documents  |----->|     Embed Chunks      |
+|    (PyPDFLoader,    |      |    (OpenAIEmbeddings) |
+|   PyPDFDirectoryLoader)|    |                       |
+|     WikipediaLoader |      +-----------------------+
++---------------------+                  |
+           |                             |
+           v                             |
++---------------------+                  |
+|                     |                  |
+|   Split Documents   |------------------+
+| (RecursiveCharacter |
+|     TextSplitter    |
+|   with Tokenizer)   |
++---------------------+
+
+        (Query Pipeline)
+               ^
+               |
++-----------------------+      +---------------------+      +---------------------+
+|                       |      |                     |      |                     |
+|      User Query       |----->|     Retrieval       |----->|     LLM & Prompt    |
+|                       |      | (VectorStore.as_retriever)|    |  (ChatOpenAI,       |
++-----------------------+      |   (FAISS or Pinecone)) |    | ChatPromptTemplate)|
+               |               +---------------------+      | (Uses Retrieved Context)|
+               |                        |                     |                     |
+               |                        |                     +---------------------+
+               |      +---------------------+                        |
+               |      |                     |                        |
+               +----->|     Format Context  |------------------------+
+                      |  (List of Docs to String) |
+                      +---------------------+
+                                     |
+                                     v
+                           +---------------------+
+                           |                     |
+                           |     Generated       |
+                           |      Answer         |
+                           |                     |
+                           +---------------------+
+
+     (For Conversational RAG - Not fully implemented yet)
+                           ^        ^
+                           |        |
+              +---------------------+
+              |                     |
+              |     Chat History    |
+              |                     |
+              +---------------------+
+                           |
+                           v
+              +---------------------+
+              | History-Aware Query |-----> (Retrieval)
+              | (Rewrite Query based|
+              |   on History)       |
+              +---------------------+
+
+
+
+
+Key Functions and Pipelines Used/Updated:
+
+Here's a list of the main components, classes, and pipelines we've worked with, organized by function or purpose:
+
+1. Data Loading:
+
+Functions/Classes: PyPDFLoader, PyPDFDirectoryLoader, WikipediaLoader, .load() method.
+Purpose: Reading raw content from files or web sources into Document objects.
+2. Data Processing (Splitting & Tokenizing):
+
+Functions/Classes: RecursiveCharacterTextSplitter, tiktoken.get_encoding(), custom count_tokens_tiktoken function, .split_documents() method.
+Purpose: Breaking large documents into smaller chunks suitable for embedding.
+3. Embedding:
+
+Functions/Classes: OpenAIEmbeddings, .embed_query(), .embed_documents() methods.
+Purpose: Converting text chunks or queries into numerical vector representations.
+4. Vector Store Setup & Interaction (FAISS - Local):
+
+Functions/Classes: FAISS, FAISS.from_documents(), FAISS.load_local(), FAISS.save_local(), .as_retriever() method, .similarity_search(), .similarity_search_with_score() methods.
+Pipeline: FAISS.from_documents(chunks, embeddings) (creates the index). .similarity_search(...) (performs query).
+5. Vector Store Setup & Interaction (Pinecone - Cloud):
+
+Functions/Classes: pinecone.Pinecone, pinecone.ServerlessSpec, pinecone.Index, .list_indexes(), .create_index(), .describe_index(), .Index(), .describe_index_stats(), .upsert() method, PineconeVectorStore, PineconeVectorStore.from_documents(), PineconeVectorStore.from_existing_index(), .as_retriever() method.
+Pipeline (Setup): Pinecone(keys) -> .create_index() -> .Index(name) (API calls for index management).
+Pipeline (Ingestion - Manual): Loop -> embeddings.embed_documents() -> index.upsert() (The manual process we implemented due to from_documents issues).
+Pipeline (Langchain Wrapper): PineconeVectorStore.from_existing_index(name, embeddings) (Connects Langchain to the existing index).
+6. Language Models (LLMs):
+
+Functions/Classes: ChatOpenAI, .invoke() method (standard for chat models/runnables).
+Pipeline (Basic Call): ChatOpenAI().invoke(prompt) or ChatOpenAI().invoke([messages]).
+7. Memory (for Conversation):
+
+Functions/Classes: ConversationSummaryBufferMemory, .save_context(), .load_memory_variables().
+Pipeline (Older Conversation Chain): ConversationChain(llm, memory).invoke(input).
+8. RAG Query Pipelines (Modern LCEL):
+
+LCEL Components: RunnableParallel, RunnablePassthrough, RunnableLambda, StrOutputParser, | (pipe operator).
+
+Utility Chains: create_stuff_documents_chain, create_retrieval_chain.
+
+Main RAG Pipeline (Standard Method):
+
+Components: Retriever (.as_retriever()), Prompt Template (ChatPromptTemplate.from_messages), LLM (ChatOpenAI).
+Pipeline Flow:
+retriever takes input query ({"question": ...}).
+create_stuff_documents_chain(llm, prompt) takes {"question": ..., "context": [...]}.
+create_retrieval_chain(retriever, combine_docs_chain) connects them.
+Execution: rag_chain.invoke({"question": query}).
+Purpose: Single-turn RAG Q&amp;A. (Implemented for both FAISS and Pinecone).
+RAG Pipeline (Explicit LCEL with Formatting - Attempted):
+
+Components: Retriever, RunnableLambda(format_docs), RunnableParallel, Prompt Template, LLM, Output Parser.
+Pipeline Flow: {"input": query} -> RunnableParallel({context=(retriever|format), question=passthrough}) -> PromptTemplate -> LLM -> OutputParser.
+Execution: rag_chain.invoke({"input": query}).
+Purpose: Single-turn RAG Q&amp;A with manual document formatting in LCEL (We debugged this and reverted to the standard utility chain due to errors, highlighting the robustness of the standard utilities).
+Custom Function asking_your_model:
+
+Components: Wraps the "Main RAG Pipeline (Standard Method)" using FAISS.
+Purpose: Encapsulate the FAISS RAG Q&amp;A logic for easier calling.
+9. Conversational RAG (Next Step):
+
+Functions/Classes: create_history_aware_retriever, RunnableWithMessageHistory (modern memory integration). (Will use existing Memory, Retriever, LLM, Prompt).
+Pipeline: Needs to be built combining Memory, a history-aware step, retrieval, and the RAG Q&amp;A part.
+This outline covers the major pieces we've touched on. The core LCEL pipelines for RAG are the ones built with create_retrieval_chain (or the explicit LCEL equivalents we debugged). The custom function asking_your_model is a Python function that uses one of these pipelines internally.
