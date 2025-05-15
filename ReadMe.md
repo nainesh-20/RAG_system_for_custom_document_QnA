@@ -139,5 +139,6 @@ The project is structured as a Jupyter Notebook (or executed cell-by-cell in env
 ## Contact
 
 *naineshrathod3000@gmail.com*
+*LinkedIn: https://www.linkedin.com/in/nainesh-rathod/*
 
 ---
